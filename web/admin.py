@@ -13,3 +13,7 @@ admin.site.register(models.Order)
 admin.site.register(models.SubOrder)
 admin.site.register(models.Coupon)
 admin.site.register(models.CouponRecord)
+admin.site.register(models.EnrolledBigCourse)
+admin.site.register(models.EnrolledCourse)
+admin.site.register(models.Account)
+

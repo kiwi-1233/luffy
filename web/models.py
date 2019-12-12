@@ -1,13 +1,9 @@
-import hashlib
-import random
-
-from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, User
-from django.contrib.contenttypes.fields import GenericForeignKey
-from django.contrib.contenttypes.models import ContentType
-# Create your models here.
-# Create your models here.
 from django.db import models
-
+import random
+from django.contrib.contenttypes.models import ContentType
+from django.db.models import Q
+from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.auth.models import User
 # Create your models here.
 
 # ---------课程相关的表------------
@@ -156,11 +152,76 @@ class CourseSection(models.Model):
 
 # ----------学习记录、作业、提问、评论-------------
 
+# 小课 报名
+class EnrolledCourse(models.Model):
+    """
+    account , course, enrolled_date, valid_begin_date, valid_end_date ,
+    """
+    account = models.ForeignKey("Account",on_delete=models.CASCADE)
+    course = models.ForeignKey("Course", limit_choices_to=~Q(course_type=2),on_delete=models.CASCADE)
+    enrolled_date = models.DateTimeField(auto_now_add=True)
+    valid_begin_date = models.DateField(verbose_name="有效期开始自")
+    valid_end_date = models.DateField(verbose_name="有效期结束至")
+    status_choices = ((0, '已开通'), (1, '已过期'))
+    status = models.SmallIntegerField(choices=status_choices, default=0)
+
+    def __str__(self):
+        return "%s:%s" % (self.account, self.course)
+
+
+# 大课报名
+class EnrolledBigCourse(models.Model):
+    """
+    account, big_course, enrolled_date, valid_begin_date, valid_end_date, mentor , init_scholorship ,mentor_fee.
+
+    """
+    account = models.ForeignKey("Account", on_delete=models.CASCADE)
+    big_course = models.ForeignKey("BigCourse", on_delete=models.CASCADE)
+    mentor_service_period = models.PositiveSmallIntegerField(verbose_name="服务周期(days)")  # 在这也纪录服务周期是为了防止后面课程服务期延长影响现有的学员周期 计算
+    enrolled_date = models.DateTimeField(auto_now_add=True)
+    valid_begin_date = models.DateField(verbose_name="有效期开始自", blank=True, null=True)  # 开通第一个模块时，再添加课程有效期，2年
+    valid_end_date = models.DateField(verbose_name="有效期结束至", blank=True, null=True)
+    status_choices = (
+        (0, '在学中'),
+        (1, '休学中'),
+        (2, '已毕业'),
+        (3, '超时结业'),
+        (4, '报名成功(未开始学习)'),
+        (5, '已放弃学习'),
+        (6, '休学申请中'),
+    )
+    study_status = models.SmallIntegerField(choices=status_choices, default=4)
+    mentor = models.ForeignKey("Account", verbose_name="导师", related_name='my_students',
+                               blank=True, null=True, limit_choices_to={'role': 1}, on_delete=models.CASCADE)
+    mentor_fee_balance = models.PositiveIntegerField("导师费用余额", help_text="这个学员的导师费用，每有惩罚，需在此字段同时扣除")
+    initial_scholarship = models.IntegerField("初始奖学金")
+
+    def __str__(self):
+        return "%s:%s" % (self.account, self.big_course)
+
+    class Meta:
+        unique_together = ('account', 'big_course')
+
+
 # 作业记录
 class HomeworkRecord(models.Model):
     """
     homework,  submit_time, account , mentor, mentor_review, review_time,score ,
+    obj.homeworkrecord_set
+    [linux_chapter1,python_chaper2]
+
+    homework->chapter->course->big_course
+
+    homework->enrolled_bigcourse->big_course
+    homework->enrolled_bigcourse->account
+
+    直接关联enrolled_bigcourse的好处：
+    1. 缩短查询路径
+    2. 自动帮助完成了是否有权限交作业的逻辑验证
+
     """
+    #account = models.ForeignKey("Account",)
+    account = models.ForeignKey("EnrolledBigCourse",on_delete=models.CASCADE)
     homework = models.ForeignKey("Homework", on_delete=models.CASCADE)
     score_choices = ((100, 'A+'),(90, 'A'),
                      (85, 'B+'),(80, 'B'),
@@ -212,7 +273,7 @@ class Order(models.Model):
     """
     order_num,pay_type, crate_time, paid_time,original_amount,  actual_amount , status,  third_party_order_num
     """
-    #account = models.ForeignKey("Account")
+    account = models.ForeignKey("Account",on_delete=models.CASCADE)
     order_num = models.CharField(max_length=64, unique=True)
     pay_type_choices = ((0,"支付宝"),(1,"微信"),(2,"贝理"))
     pay_type = models.SmallIntegerField(choices=pay_type_choices)
@@ -231,13 +292,14 @@ class Order(models.Model):
 
     def __str__(self):
         return "%s-%s" %(self.order_num,self.actual_amount)
-
+    # 13
 
 # 子订单
 class SubOrder(models.Model):
     """
     order, content_type , account, actual_price, original_price, date , status,
     """
+    #order_id
     order = models.ForeignKey("Order",on_delete=models.CASCADE)
     order_num = models.CharField(max_length=64, unique=True)
     #account = models.ForeignKey("Account",on_delete=models.CASCADE)
@@ -344,6 +406,10 @@ class CouponRecord(models.Model):
 
 # 题库
 
+import hashlib
+from django.contrib.auth.models import (
+    BaseUserManager, AbstractBaseUser
+)
 
 class AccountManager(BaseUserManager):
     def create_user(self,mobile, email,name , password=None):
@@ -393,7 +459,7 @@ class Account(AbstractBaseUser):
         unique=True,
     )
     is_active = models.BooleanField(default=True)
-    is_staff = models.BooleanField(verbose_name='staff status', default=True, help_text='决定着用户是否可登录管理后台')
+    is_staff = models.BooleanField(verbose_name='staff status', default=False, help_text='决定着用户是否可登录管理后台')
     is_admin = models.BooleanField(default=False)
     uid = models.CharField(max_length=64, unique=True)  # 随机自动生成, 与第3方交互用户信息时，用这个uid,以避免泄露敏感用户信息
     wx_openid = models.CharField(max_length=128, blank=True, null=True)
